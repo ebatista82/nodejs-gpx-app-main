@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visor GPX</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://cesium.com/downloads/cesiumjs/releases/1.88/Build/Cesium/Widgets/widgets.css">
+    <style>
+        body { font-family: Arial, sans-serif; background-color: #f4f4f4; margin: 0; padding: 0; }
+        .navbar { background-color: #28a745; color: white; padding: 10px; position: fixed; width: 100%; top: 0; z-index: 1000; }
+        .navbar .menu-icon { font-size: 24px; cursor: pointer; }
+        .drawer { height: 100%; width: 0; position: fixed; z-index: 1001; top: 0; left: 0; background-color: #28a745; overflow-x: hidden; transition: 0.5s; padding-top: 60px; }
+        .drawer a { padding: 8px 8px 8px 32px; text-decoration: none; font-size: 25px; color: white; display: block; transition: 0.3s; }
+        .drawer a:hover { background-color: #575757; }
+        .drawer .close-btn { position: absolute; top: 0; right: 25px; font-size: 36px; margin-left: 50px; }
+        #map, #cesiumContainer { height: 600px; width: 100%; margin-top: 80px; display: none; }
+        #map.active, #cesiumContainer.active { display: block; }
+        .toggle-button { position: fixed; top: 10px; right: 10px; z-index: 1002; }
+    </style>
+</head>
+<body>
+    <!-- Menú de navegación -->
+    <div class="navbar">
+        <span class="menu-icon" onclick="openDrawer()">&#9776;</span>
+        <span>Node.js GPX</span>
+    </div>
+
+    <!-- Drawer -->
+    <div id="drawer" class="drawer">
+        <a href="javascript:void(0)" class="close-btn" onclick="closeDrawer()">&times;</a>
+        <a href="/"><i class="fas fa-home"></i> Inicio</a>
+        <a href="/upload"><i class="fas fa-upload"></i> Cargar GPX</a>
+        <a href="/map"><i class="fas fa-map"></i> Visor de Mapa</a>
+        <a href="#"><i class="fas fa-cogs"></i> Funcionalidad Futuro 1</a>
+        <a href="#"><i class="fas fa-cogs"></i> Funcionalidad Futuro 2</a>
+    </div>
+
+    <div class="container mt-5">
+        <h1 class="text-center">Visor GPX</h1>
+        <button class="toggle-button btn btn-primary" onclick="toggleView()">Cambiar a 3D</button>
+        <div id="map" class="active"></div>
+        <div id="cesiumContainer"></div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/togeojson"></script>
+    <script src="https://cesium.com/downloads/cesiumjs/releases/1.88/Build/Cesium/Cesium.js"></script>
+    <script>
+        // Reemplaza 'YOUR_CESIUM_ION_ACCESS_TOKEN' con tu token de acceso de Cesium ion
+        Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiI4YWEyNjdkNy03NDk3LTRmOGItOTE3ZC0wMGY5NDE3ZWU5NjAiLCJpZCI6MjgyMjgyLCJpYXQiOjE3NDEzNzY3OTF9.lP5SoFz4GDQPP8OI03pOJib6waNeUQkqmqUroD4bFhk';
+
+        function openDrawer() {
+            document.getElementById("drawer").style.width = "250px";
+        }
+
+        function closeDrawer() {
+            document.getElementById("drawer").style.width = "0";
+        }
+
+        let is3D = false; // Cambiar a 2D por defecto
+        const mapContainer = document.getElementById('map');
+        const cesiumContainer = document.getElementById('cesiumContainer');
+        const toggleButton = document.querySelector('.toggle-button');
+
+        const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors'
+        });
+
+        const satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+            attribution: 'Tiles © Esri'
+        });
+
+        const realView = L.tileLayer('https://{s}.tile.thunderforest.com/atlas/{z}/{x}/{y}.png?apikey=YOUR_API_KEY', {
+            attribution: '© Thunderforest contributors'
+        });
+
+        const mapa = L.map('map', {
+            center: [18.7357, -70.1627], // República Dominicana
+            zoom: 8,
+            layers: [osm] // Capa base por defecto
+        });
+
+        // Control de capas
+        const baseMaps = {
+            "OpenStreetMap": osm,
+            "Satellite": satellite,
+            "Real View": realView
+        };
+
+        L.control.layers(baseMaps).addTo(mapa);
+
+        const viewer = new Cesium.Viewer('cesiumContainer', {
+            terrainProvider: Cesium.createWorldTerrain()
+        });
+
+        function toggleView() {
+            is3D = !is3D;
+            console.log('Cambiando vista a', is3D ? '3D' : '2D');
+            if (is3D) {
+                mapContainer.classList.remove('active');
+                cesiumContainer.classList.add('active');
+                toggleButton.textContent = 'Cambiar a 2D';
+                console.log('Llamando a cargarPoligonos3D');
+                cargarPoligonos3D();
+            } else {
+                cesiumContainer.classList.remove('active');
+                mapContainer.classList.add('active');
+                toggleButton.textContent = 'Cambiar a 3D';
+                cargarPoligonos();
+            }
+        }
+
+        // Función para agregar un polígono al mapa 2D
+        function agregarPoligono(poligono) {
+            console.log('Agregando polígono 2D:', poligono);
+            const capa = L.geoJSON(poligono.geoJson, {
+                style: {
+                    color: 'blue',
+                    fillColor: 'blue',
+                    fillOpacity: 0.2
+                },
+                pointToLayer: function (feature, latlng) {
+                    return L.circleMarker(latlng, {
+                        radius: 0, // Ocultar los puntos
+                        fillOpacity: 0
+                    });
+                },
+                onEachFeature: function (feature, layer) {
+                    if (feature.properties && feature.properties.name) {
+                        layer.bindPopup(feature.properties.name);
+                    }
+                    const contenidoPopup = `
+                        <b>Tipo de Planta:</b> ${poligono.tipoDePlanta}<br>
+                        <b>Número de Plantas:</b> ${poligono.numeroDePlantas}<br>
+                        <b>Fecha de Plantación:</b> ${poligono.fechaDePlantacion}<br>
+                        <b>Tipo de Suelo:</b> ${poligono.tipoDeSuelo}<br>
+                        <b>Nombre del Agricultor:</b> ${poligono.nombreDelAgricultor}<br>
+                        <button class="btn btn-danger btn-sm mt-2" onclick="eliminarPoligono('${poligono._id}', this)">Eliminar</button>
+                        <button class="btn btn-warning btn-sm mt-2" onclick="editarPoligono('${poligono._id}')">Editar</button>
+                    `;
+                    layer.bindPopup(contenidoPopup);
+                }
+            }).addTo(mapa);
+        }
+
+        // Función para agregar un polígono al mapa 3D
+        function agregarPoligono3D(poligono) {
+            console.log('Agregando polígono 3D:', poligono);
+            const coordinates = poligono.geoJson.features[0].geometry.coordinates.flat();
+            console.log('Coordenadas:', coordinates);
+            const hierarchy = Cesium.Cartesian3.fromDegreesArray(coordinates);
+            console.log('Jerarquía:', hierarchy);
+            const entity = viewer.entities.add({
+                polygon: {
+                    hierarchy: hierarchy,
+                    material: Cesium.Color.BLUE.withAlpha(0.5),
+                    extrudedHeight: 500
+                }
+            });
+
+            // Agregar propiedades al entity para edición y eliminación
+            entity.properties = new Cesium.PropertyBag({
+                id: poligono._id,
+                nombreDelAgricultor: poligono.nombreDelAgricultor,
+                tipoDePlanta: poligono.tipoDePlanta,
+                numeroDePlantas: poligono.numeroDePlantas,
+                fechaDePlantacion: poligono.fechaDePlantacion,
+                tipoDeSuelo: poligono.tipoDeSuelo
+            });
+
+            viewer.zoomTo(viewer.entities);
+        }
+
+        // Función para cargar y mostrar los polígonos guardados en 2D
+        function cargarPoligonos() {
+            console.log('Cargando polígonos en 2D...');
+            fetch('/api/gpx/poligonos')
+                .then(response => {
+                    console.log('Respuesta recibida:', response);
+                    return response.json();
+                })
+                .then(poligonos => {
+                    console.log('Polígonos cargados (2D):', poligonos);
+                    // Eliminar todas las capas existentes antes de agregar las nuevas
+                    mapa.eachLayer(layer => {
+                        if (layer instanceof L.GeoJSON) {
+                            mapa.removeLayer(layer);
+                        }
+                    });
+                    poligonos.forEach(poligono => {
+                        agregarPoligono(poligono);
+                    });
+                })
+                .catch(error => console.error('Error al obtener los polígonos:', error));
+        }
+
+        // Función para cargar y mostrar los polígonos guardados en 3D
+        function cargarPoligonos3D() {
+            console.log('Cargando polígonos en 3D...');
+            fetch('/api/gpx/poligonos')
+                .then(response => {
+                    console.log('Respuesta recibida:', response);
+                    return response.json();
+                })
+                .then(poligonos => {
+                    console.log('Polígonos cargados (3D):', poligonos);
+                    // Eliminar todas las entidades existentes antes de agregar las nuevas
+                    viewer.entities.removeAll();
+                    poligonos.forEach(poligono => {
+                        agregarPoligono3D(poligono);
+                    });
+                })
+                .catch(error => console.error('Error al obtener los polígonos:', error));
+        }
+
+        // Cargar los polígonos en 2D al cargar la página
+        cargarPoligonos();
+
+        function eliminarPoligono(id, button) {
+            fetch(`/api/gpx/poligonos/${id}`, {
+                method: 'DELETE'
+            })
+            .then(response => response.text())
+            .then(data => {
+                console.log(data);
+                // Recargar los polígonos después de eliminar
+                if (is3D) {
+                    cargarPoligonos3D();
+                } else {
+                    cargarPoligonos();
+                }
+            })
+            .catch(error => console.error('Error al eliminar el polígono:', error));
+        }
+
+        function editarPoligono(id) {
+            const nuevoNombreDelAgricultor = prompt('Ingrese el nuevo nombre del agricultor:');
+            const nuevoTipoDePlanta = prompt('Ingrese el nuevo tipo de planta:');
+            const nuevoNumeroDePlantas = prompt('Ingrese el nuevo número de plantas:');
+            const nuevaFechaDePlantacion = prompt('Ingrese la nueva fecha de plantación:');
+            const nuevoTipoDeSuelo = prompt('Ingrese el nuevo tipo de suelo:');
+
+            fetch(`/api/gpx/poligonos/${id}`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    nombreDelAgricultor: nuevoNombreDelAgricultor,
+                    tipoDePlanta: nuevoTipoDePlanta,
+                    numeroDePlantas: nuevoNumeroDePlantas,
+                    fechaDePlantacion: nuevaFechaDePlantacion,
+                    tipoDeSuelo: nuevoTipoDeSuelo
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log(data);
+                // Recargar los polígonos después de editar
+                if (is3D) {
+                    cargarPoligonos3D();
+                } else {
+                    cargarPoligonos();
+                }
+            })
+            .catch(error => console.error('Error al actualizar el polígono:', error));
+        }
+
+        // Función para eliminar un polígono en 3D
+        function eliminarPoligono3D(id) {
+            fetch(`/api/gpx/poligonos/${id}`, {
+                method: 'DELETE'
+            })
+            .then(response => response.text())
+            .then(data => {
+                console.log(data);
+                // Recargar los polígonos después de eliminar
+                cargarPoligonos3D();
+            })
+            .catch(error => console.error('Error al eliminar el polígono:', error));
+        }
+
+        // Función para editar un polígono en 3D
+        function editarPoligono3D(id) {
+            const nuevoNombreDelAgricultor = prompt('Ingrese el nuevo nombre del agricultor:');
+            const nuevoTipoDePlanta = prompt('Ingrese el nuevo tipo de planta:');
+            const nuevoNumeroDePlantas = prompt('Ingrese el nuevo número de plantas:');
+            const nuevaFechaDePlantacion = prompt('Ingrese la nueva fecha de plantación:');
+            const nuevoTipoDeSuelo = prompt('Ingrese el nuevo tipo de suelo:');
+
+            fetch(`/api/gpx/poligonos/${id}`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    nombreDelAgricultor: nuevoNombreDelAgricultor,
+                    tipoDePlanta: nuevoTipoDePlanta,
+                    numeroDePlantas: nuevoNumeroDePlantas,
+                    fechaDePlantacion: nuevaFechaDePlantacion,
+                    tipoDeSuelo: nuevoTipoDeSuelo
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log(data);
+                // Recargar los polígonos después de editar
+                cargarPoligonos3D();
+            })
+            .catch(error => console.error('Error al actualizar el polígono:', error));
+        }
+
+        // Añadir eventos de clic a las entidades en Cesium
+        viewer.screenSpaceEventHandler.setInputAction(function onLeftClick(movement) {
+            const pickedObject = viewer.scene.pick(movement.position);
+            if (Cesium.defined(pickedObject)) {
+                const entity = pickedObject.id;
+                if (entity.properties) {
+                    const id = entity.properties.id.getValue();
+                    const nombreDelAgricultor = entity.properties.nombreDelAgricultor.getValue();
+                    const tipoDePlanta = entity.properties.tipoDePlanta.getValue();
+                    const numeroDePlantas = entity.properties.numeroDePlantas.getValue();
+                    const fechaDePlantacion = entity.properties.fechaDePlantacion.getValue();
+                    const tipoDeSuelo = entity.properties.tipoDeSuelo.getValue();
+
+                    const contenidoPopup = `
+                        <b>Tipo de Planta:</b> ${tipoDePlanta}<br>
+                        <b>Número de Plantas:</b> ${numeroDePlantas}<br>
+                        <b>Fecha de Plantación:</b> ${fechaDePlantacion}<br>
+                        <b>Tipo de Suelo:</b> ${tipoDeSuelo}<br>
+                        <b>Nombre del Agricultor:</b> ${nombreDelAgricultor}<br>
+                        <button class="btn btn-danger btn-sm mt-2" onclick="eliminarPoligono3D('${id}')">Eliminar</button>
+                        <button class="btn btn-warning btn-sm mt-2" onclick="editarPoligono3D('${id}')">Editar</button>
+                    `;
+
+                    const infoBox = viewer.infoBox;
+                    infoBox.viewModel.showInfo = true;
+                    infoBox.viewModel.titleText = 'Información del Polígono';
+                    infoBox.viewModel.description = contenidoPopup;
+                }
+            }
+        }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+    </script>
+</body>
+</html>
